@@ -18,6 +18,7 @@ class Validator < ActiveRecord::Base
     after_all_transactions  :after_all_transactions
 
     state :sleeping, :initial => true
+    state :awake
     state :running
     state :failed, :after_enter => :fail
 
@@ -34,10 +35,15 @@ class Validator < ActiveRecord::Base
     end
 
     event :sleep do
-      after_commit do |name|
-        change_name_on_sleep name
-      end
-      transitions :to => :sleeping, :from => :running
+      after_commit { append_name!(' slept') }
+
+      transitions :to => :sleeping, :from => [:running, :awake]
+    end
+
+    event :wake do
+      after_commit { |description| append_name!(" awoke#{description}") }
+
+      transitions :to => :awake, :from => [:sleeping]
     end
 
     event :fail do
@@ -49,19 +55,19 @@ class Validator < ActiveRecord::Base
         @before_transaction_performed_on_fail = true
       end
 
-      transitions :to => :failed, :from => [:sleeping, :running]
+      transitions :to => :failed, :from => [:sleeping, :running, :awake]
     end
   end
 
   validates_presence_of :name
 
-  def change_name!
-    self.name = "name changed"
+  def append_name!(suffix)
+    self.name += suffix
     save!
   end
 
-  def change_name_on_sleep name
-    self.name = name
+  def change_name!
+    self.name = 'name changed'
     save!
   end
 
@@ -79,36 +85,43 @@ class Validator < ActiveRecord::Base
 end
 
 class MultipleValidator < ActiveRecord::Base
-
   include AASM
   aasm :left, :column => :status, :whiny_persistence => true do
     state :sleeping, :initial => true
+    state :awake
     state :running
     state :failed, :after_enter => :fail
 
     event :run, :after_commit => :change_name! do
       transitions :to => :running, :from => :sleeping
     end
+
     event :sleep do
-      after_commit do |name|
-        change_name_on_sleep name
-      end
-      transitions :to => :sleeping, :from => :running
+      after_commit { append_name!(' slept') }
+
+      transitions :to => :sleeping, :from => [:running, :awake]
     end
+
+    event :wake do
+      after_commit { |description| append_name!(" awoke#{description}") }
+
+      transitions :to => :awake, :from => [:sleeping]
+    end
+
     event :fail do
-      transitions :to => :failed, :from => [:sleeping, :running]
+      transitions :to => :failed, :from => [:sleeping, :running, :awake]
     end
   end
 
   validates_presence_of :name
 
-  def change_name!
-    self.name = "name changed"
+  def append_name!(suffix)
+    self.name += suffix
     save!
   end
 
-  def change_name_on_sleep name
-    self.name = name
+  def change_name!
+    self.name = 'name changed'
     save!
   end
 

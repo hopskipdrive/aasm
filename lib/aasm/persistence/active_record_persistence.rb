@@ -35,6 +35,8 @@ module AASM
 
         base.after_initialize :aasm_ensure_initial_state
 
+        base.after_commit :aasm_after_commit_hooks
+
         # ensure state is in the list of states
         base.validate :aasm_validate_states
       end
@@ -159,8 +161,69 @@ module AASM
 
         def aasm_column_is_blank?(state_machine_name)
           attribute_name = self.class.aasm(state_machine_name).attribute_name
+          # attribute_names.include?(attribute_name.to_s) && send(attribute_name).blank?
           attribute_names.include?(attribute_name.to_s) &&
-            (send(attribute_name).respond_to?(:empty?) ? !!send(attribute_name).empty? : !send(attribute_name))
+          (send(attribute_name).respond_to?(:empty?) ? !!send(attribute_name).empty? : !send(attribute_name))
+        end
+
+        def aasm_fire_event(state_machine_name, name, options, *args, &block)
+          event = self.class.aasm(state_machine_name).state_machine.events[name]
+
+          if options[:persist]
+            event.fire_callbacks(:before_transaction, self, *args)
+            event.fire_global_callbacks(:before_all_transactions, self, *args)
+          end
+
+          begin
+            success = if options[:persist]
+              self.class.transaction(:requires_new => requires_new?(state_machine_name)) do
+                lock!(requires_lock?(state_machine_name)) if requires_lock?(state_machine_name)
+                super
+              end
+            else
+              super
+            end
+
+            if options[:persist] && success
+              # Delegating to ActiveRecord
+              # event.fire_callbacks(:after_commit, self, *args)
+              # event.fire_global_callbacks(:after_all_commits, self, *args)
+            end
+          ensure
+            if options[:persist]
+              event.fire_callbacks(:after_transaction, self, *args)
+              event.fire_global_callbacks(:after_all_transactions, self, *args)
+            end
+          end
+
+          success
+        end
+
+        def aasm_after_commit_hooks
+          AASM::StateMachine[self.class].keys.each do |state_machine_name|
+            new_state = aasm(state_machine_name).state_object_for_name(aasm(state_machine_name).current_state)
+            new_state.fire_callbacks(:after_commit, self)
+
+            events_fired = aasm(state_machine_name).events_fired
+
+            until events_fired.empty?
+              event_name, *args = events_fired.shift
+              self.class.aasm(state_machine_name).state_machine.events[event_name].fire_callbacks(:after_commit, self, *args)
+              self.class.aasm(state_machine_name).state_machine.events[event_name].fire_global_callbacks(:after_all_commits, self, *args)
+            end
+          end
+        ensure
+          AASM::StateMachine[self.class].keys.each do |state_machine_name|
+            aasm(state_machine_name).events_fired.clear
+          end
+        end
+
+        def requires_new?(state_machine_name)
+          AASM::StateMachine[self.class][state_machine_name].config.requires_new_transaction
+        end
+
+        def requires_lock?(state_machine_name)
+          AASM::StateMachine[self.class][state_machine_name].config.requires_lock
         end
 
         def aasm_validate_states
