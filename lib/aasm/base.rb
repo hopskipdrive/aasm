@@ -99,11 +99,13 @@ module AASM
 
         def #{name}!(*args, &block)
           aasm(:#{@name}).current_event = :#{name}!
+          aasm(:#{@name}).events_fired |= [[:#{name}, *args]]
           aasm_fire_event(:#{@name}, :#{name}, {:persist => true}, *args, &block)
         end
 
         def #{name}(*args, &block)
           aasm(:#{@name}).current_event = :#{name}
+          aasm(:#{@name}).events_fired |= [[:#{name}, *args]]
           aasm_fire_event(:#{@name}, :#{name}, {:persist => false}, *args, &block)
         end
       EORUBY
