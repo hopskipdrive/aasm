@@ -36,6 +36,8 @@ module AASM
           aasm_ensure_initial_state
         end
 
+        base.after_commit :aasm_after_commit_hooks
+
         # ensure state is in the list of states
         base.validate :aasm_validate_states
       end
@@ -145,14 +147,25 @@ module AASM
         end
 
         def aasm_fire_event(state_machine_name, name, options, *args, &block)
-          success = options[:persist] ? self.class.transaction(:requires_new => requires_new?(state_machine_name)) { super } : super
+          options[:persist] ? self.class.transaction(:requires_new => requires_new?(state_machine_name)) { super } : super
+        end
 
-          if success && options[:persist]
-            event = self.class.aasm(state_machine_name).state_machine.events[name]
-            event.fire_callbacks(:after_commit, self, *args)
+        def aasm_after_commit_hooks
+          AASM::StateMachine[self.class].keys.each do |state_machine_name|
+            new_state = aasm(state_machine_name).state_object_for_name(aasm(state_machine_name).current_state)
+            new_state.fire_callbacks(:after_commit, self)
+
+            events_fired = aasm(state_machine_name).events_fired
+
+            until events_fired.empty?
+              next_event, *args = events_fired.shift
+              self.class.aasm(state_machine_name).state_machine.events[next_event].fire_callbacks(:after_commit, self, *args)
+            end
           end
-
-          success
+        ensure
+          AASM::StateMachine[self.class].keys.each do |state_machine_name|
+            aasm(state_machine_name).events_fired.clear
+          end
         end
 
         def requires_new?(state_machine_name)
